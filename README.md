@@ -1,83 +1,79 @@
-# codex-ios
+# litter (codex-ios)
 
-iOS app embedding the [codex](https://github.com/openai/codex) coding agent as an in-process Rust library via C FFI and a local WebSocket JSON-RPC server.
+`litter` is an iOS client for Codex. It supports:
+
+- `LitterRemote`: remote-only mode (default scheme; no bundled on-device Rust server)
+- `Litter`: includes the on-device Rust bridge (`codex_bridge.xcframework`)
 
 ## Prerequisites
 
-- **Xcode.app** (not just Command Line Tools) — required for iOS SDKs. Install from the App Store, then:
-  ```bash
-  sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
-  ```
-- **Rust** with iOS targets:
+- Xcode.app (full install, not only CLT)
+- Rust + iOS targets:
   ```bash
   rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios
   ```
-- The codex repo checked out at `~/dev/codex` (sibling of this repo)
+- `xcodegen` (for regenerating `Litter.xcodeproj`):
+  ```bash
+  brew install xcodegen
+  ```
 
-## Build
+## Codex source (submodule + patch)
 
-### 1. Compile the Rust bridge
+This repo now vendors upstream Codex as a submodule:
+
+- `third_party/codex` -> `https://github.com/openai/codex`
+
+On-device iOS exec hook changes are kept as a local patch:
+
+- `patches/codex/ios-exec-hook.patch`
+
+Sync/apply patch (idempotent):
+
+```bash
+./scripts/sync-codex.sh
+```
+
+## Build the Rust bridge
 
 ```bash
 ./scripts/build-rust.sh
 ```
 
-Cross-compiles `codex-bridge` for device (`aarch64-apple-ios`) and both simulator architectures, lipo-merges the simulator slices, then packages into `Frameworks/codex_bridge.xcframework`.
+This script:
 
-### 2. Open the Xcode project
+1. Syncs `third_party/codex` and applies the iOS hook patch
+2. Builds `codex-bridge` for device + simulator targets
+3. Repackages `Frameworks/codex_bridge.xcframework`
 
-```bash
-open CodexIOS.xcodeproj
-```
+## Build and run iOS app
 
-The project is pre-configured (via xcodegen from `project.yml`) with:
-- Bridging header pointing to `Sources/CodexIOS/Bridge/codex_bridge_objc.h`
-- `codex_bridge.xcframework` embedded and linked
-- `Security.framework`, `SystemConfiguration.framework` linked
-- `NSLocalNetworkUsageDescription` in Info.plist
-
-Set your Team in the Signing & Capabilities tab, then build.
-
-### 3. Configure and run
-
-Launch → tap **Configure & Connect** → enter your OpenAI API key → tap Connect.
-
-## Regenerate the Xcode project
-
-If you add or remove Swift files, regenerate the `.xcodeproj` from `project.yml`:
+Regenerate project if `project.yml` changed:
 
 ```bash
-brew install xcodegen   # once
 xcodegen generate
 ```
 
-## Architecture
+Open in Xcode:
 
-```
-SwiftUI Views (ConversationView, SettingsView, …)
-    ↓
-ConversationStore (@MainActor ObservableObject)
-    ↓
-JSONRPCClient (actor, URLSessionWebSocketTask)
-    ↓  ws://127.0.0.1:{port}
-codex_bridge.xcframework  (Rust staticlib)
-  codex-bridge crate  →  codex-app-server  →  tokio runtime
-    ↓
-codex-core  →  OpenAI Responses API
+```bash
+open Litter.xcodeproj
 ```
 
-**Flow:** app launch → `codex_start_server(&port)` (C FFI) → tokio runtime starts → app-server binds `127.0.0.1:0` → returns port → Swift WebSocket connects → `initialize` + `thread/start` → user sends `turn/start` → streaming `codex/event/*` notifications render in the UI.
+Schemes:
 
-## Key files
+- `LitterRemote` (default): no on-device Rust bridge
+- `Litter`: uses bundled `codex_bridge.xcframework`
 
-| File | Purpose |
-|------|---------|
-| `codex-bridge/src/lib.rs` | C FFI: `codex_start_server`, `codex_stop_server` |
-| `codex-bridge/Cargo.toml` | Standalone staticlib crate; patches for openai-oss-forks of tungstenite |
-| `scripts/build-rust.sh` | Cross-compile + lipo + xcframework |
-| `Sources/CodexIOS/Bridge/CodexBridge.swift` | Singleton wrapping the C FFI |
-| `Sources/CodexIOS/Bridge/JSONRPCClient.swift` | Actor-based WebSocket JSON-RPC multiplexer |
-| `Sources/CodexIOS/Bridge/CodexProtocol.swift` | Codable types mirroring the app-server protocol |
-| `Sources/CodexIOS/Models/ConversationStore.swift` | App state: messages, status, server lifecycle |
-| `Sources/CodexIOS/Views/ConversationView.swift` | Main chat UI |
-| `project.yml` | xcodegen spec — edit this, not the `.xcodeproj` directly |
+CLI build example:
+
+```bash
+xcodebuild -project Litter.xcodeproj -scheme LitterRemote -configuration Debug -destination 'platform=iOS Simulator,name=iPhone 17 Pro' build
+```
+
+## Important paths
+
+- `project.yml`: source of truth for Xcode project/schemes
+- `codex-bridge/`: Rust staticlib wrapper exposing `codex_start_server`/`codex_stop_server`
+- `third_party/codex/`: upstream Codex source (submodule)
+- `patches/codex/ios-exec-hook.patch`: iOS-specific hook patch applied to submodule
+- `Sources/Litter/Bridge/`: Swift bridge + JSON-RPC client

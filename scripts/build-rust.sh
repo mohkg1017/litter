@@ -7,6 +7,9 @@ FRAMEWORKS_DIR="$SCRIPT_DIR/../Frameworks"
 
 mkdir -p "$FRAMEWORKS_DIR"
 
+echo "==> Preparing codex submodule..."
+"$SCRIPT_DIR/sync-codex.sh"
+
 cd "$BRIDGE_DIR"
 
 echo "==> Installing iOS targets..."
